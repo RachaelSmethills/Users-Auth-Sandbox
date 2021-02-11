@@ -2,12 +2,34 @@ const express = require("express");
 const moo = require("./middleware/toplayer");
 const User = require("./models/user");
 const mongoose = require("mongoose");
+const basicAuth = require("express-basic-auth");
 
 const app = new express();
 
 app.use(express.json());
 
 app.use(moo);
+
+app.use(
+  basicAuth({
+    authorizer: myAsyncAuthorizer,
+    authorizeAsync: true,
+    unauthorizedResponse: (req) => {
+      return `401 not authorised`;
+    },
+  })
+);
+
+function myAsyncAuthorizer(un, pass, cb) {
+  console.log("Authing: ", un, pass);
+  User.findOne({ username: un, password: pass }, (error, results) => {
+    if (!results) {
+      return cb(null, false);
+    } else {
+      return cb(null, true);
+    }
+  });
+}
 
 mongoose.connection.on("connecting", () => {
   console.log("Doing my best..");
