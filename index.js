@@ -3,22 +3,39 @@ const moo = require("./middleware/toplayer");
 const sessionCheck = require("./middleware/sessionMiddleware");
 const User = require("./models/user");
 const mongoose = require("mongoose");
-const basicAuth = require("express-basic-auth");
 const session = require("express-session");
+const jwt = require("express-jwt");
+const jwksRsa = require("jwks-rsa");
+const cors = require("cors");
+var request = require("request");
+const { auth, requiresAuth } = require("express-openid-connect");
+
+require("dotenv").config(".env");
 
 const app = new express();
 
 app.use(express.json());
 
-app.use(sessionCheck);
+app.use(cors());
 
-const basicAuthConst = {
-  authorizer: myAsyncAuthorizer,
-  authorizeAsync: true,
-  unauthorizedResponse: (req) => {
-    return `401 not authorised`;
-  },
+const config = {
+  authRequired: false,
+  auth0Logout: true,
+  secret: "a long, randomly-generated string stored in env",
+  baseURL: "http://localhost:3001",
+  clientID: "wmQqBoynvHrFGefEXl1yn9R1u5aue66a",
+  issuerBaseURL: "https://ras140899.eu.auth0.com",
 };
+
+// auth router attaches /login, /logout, and /callback routes to the baseURL
+app.use(auth(config));
+
+// req.isAuthenticated is provided from the auth router
+app.get("/", (req, res) => {
+  res.send(req.oidc.user || "Not logged in");
+});
+
+//app.use(sessionCheck);
 
 app.use(
   session({
@@ -28,50 +45,40 @@ app.use(
   })
 );
 
-function myAsyncAuthorizer(un, pass, cb) {
-  console.log("Authing: ", un, pass);
-  User.findOne({ username: un, password: pass }, (error, results) => {
-    if (!results) {
-      return cb(null, false);
-    } else {
-      return cb(null, true);
-    }
-  });
-}
-
-app.post("/login", basicAuth(basicAuthConst), function (req, res, next) {
-  if (!req.session.userId) {
-    User.findOne(
-      { username: req.auth.user, password: req.auth.password },
-      (error, results) => {
-        if (!results) {
-          res.status(304).send(`Query Failed.. how`);
-        } else {
-          req.session.userId = `${results._id}`;
-          res.status(200).send(`All Good - ${results._id}`);
-        }
-      }
-    );
-  }
+app.get("/profile", requiresAuth(), (req, res) => {
+  res.send(JSON.stringify(req.oidc.user));
 });
 
-app.get("/logout", function (req, res, next) {
-  req.session.destroy(() => {
-    res.status(200).send("Logged out");
-  });
+const checkJwt = jwt({
+  secret: jwksRsa.expressJwtSecret({
+    cache: true,
+    rateLimit: true,
+    jwksRequestsPerMinute: 5,
+    jwksUri: `${process.env.AUTH0_DOMAIN}.well-known/jwks.json`,
+  }),
+  audience: process.env.AUTH0_AUDIENCE,
+  issuer: `${process.env.AUTH0_DOMAIN}`,
+  algorithms: ["RS256"],
 });
 
-app.get("/", function (req, res, next) {
-  if (req.session.views) {
-    req.session.views++;
-    res.setHeader("Content-Type", "text/html");
-    res.write("<p>views: " + req.session.views + "</p>");
-    res.write("<p>expires in: " + req.session.cookie.maxAge / 1000 + "s</p>");
-    res.end();
-  } else {
-    req.session.views = 1;
-    res.end("welcome to the session demo. refresh!");
-  }
+// app.post("/login", async (req, res) => {
+//   var options = {
+//     method: "POST",
+//     url: "https://ras140899.eu.auth0.com/oauth/token",
+//     headers: { "content-type": "application/json" },
+//     body:
+//       '{"client_id":"aAM2ry8I5H2zhnTPSDkm0zPMZy7VIG27","client_secret":"xTTrJKGMCAc4U12_rDi7JLE7M8QAGA5m6pMABRYGoQExjgQ5NIFk9Msv3tBuCqtK","audience":"https://users","grant_type":"client_credentials"}',
+//   };
+
+//   request(options, function (error, response, body) {
+//     if (error) throw new Error(error);
+
+//     res.status(200).send(body);
+//   });
+// });
+
+process.on("uncaughtException", function (err) {
+  console.log(err);
 });
 
 mongoose.connection.on("connecting", () => {
@@ -100,7 +107,8 @@ app.put("/users/:id", (req, res) => {
   });
 });
 
-app.get("/users", (req, res) => {
+app.get("/users", checkJwt, (req, res) => {
+  console.log("Process var: ", process.env.AUTH0_DOMAIN);
   User.find({}, (error, results) => {
     if (!results) {
       res.status(404).send("Nah boii");
