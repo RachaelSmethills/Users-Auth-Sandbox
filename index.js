@@ -1,22 +1,30 @@
 const express = require("express");
 const moo = require("./middleware/toplayer");
+const sessionCheck = require("./middleware/sessionMiddleware");
 const User = require("./models/user");
 const mongoose = require("mongoose");
 const basicAuth = require("express-basic-auth");
+const session = require("express-session");
 
 const app = new express();
 
 app.use(express.json());
 
-app.use(moo);
+app.use(sessionCheck);
+
+const basicAuthConst = {
+  authorizer: myAsyncAuthorizer,
+  authorizeAsync: true,
+  unauthorizedResponse: (req) => {
+    return `401 not authorised`;
+  },
+};
 
 app.use(
-  basicAuth({
-    authorizer: myAsyncAuthorizer,
-    authorizeAsync: true,
-    unauthorizedResponse: (req) => {
-      return `401 not authorised`;
-    },
+  session({
+    secret: "keyboard cat",
+    resave: false,
+    saveUninitialized: true,
   })
 );
 
@@ -30,6 +38,41 @@ function myAsyncAuthorizer(un, pass, cb) {
     }
   });
 }
+
+app.post("/login", basicAuth(basicAuthConst), function (req, res, next) {
+  if (!req.session.userId) {
+    User.findOne(
+      { username: req.auth.user, password: req.auth.password },
+      (error, results) => {
+        if (!results) {
+          res.status(304).send(`Query Failed.. how`);
+        } else {
+          req.session.userId = `${results._id}`;
+          res.status(200).send(`All Good - ${results._id}`);
+        }
+      }
+    );
+  }
+});
+
+app.get("/logout", function (req, res, next) {
+  req.session.destroy(() => {
+    res.status(200).send("Logged out");
+  });
+});
+
+app.get("/", function (req, res, next) {
+  if (req.session.views) {
+    req.session.views++;
+    res.setHeader("Content-Type", "text/html");
+    res.write("<p>views: " + req.session.views + "</p>");
+    res.write("<p>expires in: " + req.session.cookie.maxAge / 1000 + "s</p>");
+    res.end();
+  } else {
+    req.session.views = 1;
+    res.end("welcome to the session demo. refresh!");
+  }
+});
 
 mongoose.connection.on("connecting", () => {
   console.log("Doing my best..");
